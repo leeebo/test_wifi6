@@ -20,8 +20,8 @@ def parse_arguments():
                         help="Type of WiFi being tested (e.g., wifi6, wifi5)")
     parser.add_argument("-i", "--iterations", type=int, default=10,
                         help="Number of measurement iterations (default: 10)")
-    parser.add_argument("-t", "--timeout", type=int, default=3,
-                        help="Discovery timeout in seconds (default: 2)")
+    parser.add_argument("-t", "--timeout", type=int, default=5,
+                        help="Discovery timeout in seconds (default: 5)")
     parser.add_argument("-n", "--network", default=None,
                         help="Specific network to use (e.g., 192.168.1.0/24)")
     return parser.parse_args()
@@ -362,13 +362,15 @@ def analyze_wifi_time(file_path, wifi_type):
 
     # Find all discovery responses to identify WiFi modes
     wifi_modes = {}
-    mode_pattern = r'Response from (192\.168\.1\.\d+).*?\((WiFi \d+)\)'
+    # Updated pattern to match any IP address (not just 192.168.1.x)
+    mode_pattern = r'Response from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}).*?\((WiFi \d+)\)'
     mode_matches = re.findall(mode_pattern, content)
     for ip, mode in mode_matches:
         wifi_modes[ip] = 6 if mode == "WiFi 6" else 4
 
     # Find all IP addresses and their delays
-    pattern = r'Response from (192\.168\.1\.\d+).*?\n.*?One-way Delay ≈ ([\d.]+) ms'
+    # Updated pattern to match any IP address (not just 192.168.1.x)
+    pattern = r'Response from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}).*?\n.*?One-way Delay ≈ ([\d.]+) ms'
     matches = re.findall(pattern, content)
 
     # Dictionaries to store all delays for each IP
@@ -387,7 +389,26 @@ def analyze_wifi_time(file_path, wifi_type):
                 wifi6_ip_delays[ip].append(delay_val)
             else:
                 wifi4_ip_delays[ip].append(delay_val)
+        # For IPs with unknown modes, try to determine from the content
+        else:
+            # Look for mentions of this IP with WiFi mode in the content
+            ip_wifi6_mention = re.search(rf"{ip}.*?WiFi 6", content)
+            ip_wifi4_mention = re.search(rf"{ip}.*?WiFi 4", content)
+            
+            if ip_wifi6_mention and not ip_wifi4_mention:
+                wifi6_ip_delays[ip].append(delay_val)
+                wifi_modes[ip] = 6  # Remember for future references
+            elif ip_wifi4_mention and not ip_wifi6_mention:
+                wifi4_ip_delays[ip].append(delay_val)
+                wifi_modes[ip] = 4  # Remember for future references
+            else:
+                # If we can't determine, assume based on the test type
+                if wifi_type.lower() == "wifi6":
+                    wifi6_ip_delays[ip].append(delay_val)
+                else:
+                    wifi4_ip_delays[ip].append(delay_val)
 
+    print(f"Analysis found {len(wifi6_ip_delays)} WiFi 6 devices and {len(wifi4_ip_delays)} WiFi 4 devices")
     return ip_delays, wifi6_ip_delays, wifi4_ip_delays
 
 
@@ -570,7 +591,7 @@ def run_wifi_type_test(wifi_mode, iterations, colors, global_seq):
             seq = global_seq + i
             send_commands_to_devices_by_type(discovered_devices, wifi_mode, r, g, b, seq, send_sock, thread_name)
             # Give time for responses
-            time.sleep(1)
+            time.sleep(1.5)
     finally:
         send_sock.close()
     
@@ -667,14 +688,14 @@ if __name__ == "__main__":
         plot_wifi_data(ip_delays, WIFI_TYPE, y_min, y_max)
         
         # Generate separate plots for WiFi 6 devices
-        if wifi6_delays:
+        if len(wifi6_delays) > 0:
             plot_wifi_data(wifi6_delays, "WiFi6", y_min, y_max)
             
         # Generate separate plots for WiFi 4 devices
-        if wifi4_delays:
+        if len(wifi4_delays) > 0:
             plot_wifi_data(wifi4_delays, "WiFi4", y_min, y_max)
             
         # Generate comparison plot if we have both types of devices
-        if wifi6_delays and wifi4_delays:
-            plot_wifi_comparison(wifi6_delays, wifi4_delays, 0, 50)
+        if len(wifi6_delays) > 0 and len(wifi4_delays) > 0:
+            plot_wifi_comparison(wifi6_delays, wifi4_delays, 0, 600)
 
